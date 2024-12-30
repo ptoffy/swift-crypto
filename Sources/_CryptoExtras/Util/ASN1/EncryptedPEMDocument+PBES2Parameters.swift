@@ -16,7 +16,7 @@ import SwiftASN1
 
 extension EncryptedPEMDocument {
     struct PBES2Parameters: DERParseable {
-        static var defaultIdentifier: SwiftASN1.ASN1Identifier { .sequence }
+        static var defaultIdentifier: ASN1Identifier { .sequence }
         
         let keyDerivationFunction: PBKDF2
         let encryptionScheme: EncryptionScheme
