@@ -25,12 +25,12 @@ import Foundation
 // EncryptionAlgorithmIdentifier ::= AlgorithmIdentifier
 //
 // EncryptedData ::= OCTET STRING
-struct EncryptedPEMDocument: PEMRepresentable {
-    let algorithmIdentifier: RFC5480AlgorithmIdentifier
+struct EncryptedPEMDocument: PEMParseable {
+    let encryptionAlgorithm: any EncryptionAlgorithm
     let encryptedData: ASN1OctetString
     
-    init(algorithmIdentifier: RFC5480AlgorithmIdentifier, encryptedData: ASN1OctetString) {
-        self.algorithmIdentifier = algorithmIdentifier
+    init(encryptionAlgorithm: some EncryptionAlgorithm, encryptedData: ASN1OctetString) {
+        self.encryptionAlgorithm = encryptionAlgorithm
         self.encryptedData = encryptedData
     }
     
@@ -41,53 +41,48 @@ struct EncryptedPEMDocument: PEMRepresentable {
     init(derEncoded node: ASN1Node) throws {
         self = try DER.sequence(node, identifier: .sequence) { nodes in
             let algorithmIdentifier = try RFC5480AlgorithmIdentifier(derEncoded: &nodes)
+            
+            guard let parameters = algorithmIdentifier.parameters else {
+                throw _CryptoRSAError.invalidPEMDocument
+            }
+            
+            let encryptionAlgorithm = switch algorithmIdentifier.algorithm {
+            case .pkcs5PBES2:
+                try PBES2(parameters: .init(asn1Any: parameters))
+            default: throw _CryptoRSAError.invalidPEMDocument
+            }
+            
             let encryptedData = try ASN1OctetString(derEncoded: &nodes)
             
-            return .init(algorithmIdentifier: algorithmIdentifier, encryptedData: encryptedData)
-        }
-    }
-    
-    func serialize(into coder: inout SwiftASN1.DER.Serializer) throws {
-        try coder.appendConstructedNode(identifier: .sequence) { coder in
-            try self.algorithmIdentifier.serialize(into: &coder)
-            try self.encryptedData.serialize(into: &coder)
+            return .init(encryptionAlgorithm: encryptionAlgorithm, encryptedData: encryptedData)
         }
     }
     
     func decrypt(withPassword password: String) throws -> PEMDocument {
-        let algorithm = self.algorithmIdentifier.algorithm
-        
-        guard let parameters = self.algorithmIdentifier.parameters else {
-            throw _CryptoRSAError.invalidPEMDocument
-        }
-        
-        switch algorithm {
-        case .pkcs5PBES2:
-            let pbes2Params = try PBES2Parameters(asn1Any: parameters)
-            let pbkdf2Params = try KeyDerivationFunction.PBKDF2Parameters(asn1Any: pbes2Params.keyDerivationFunction.parameters)
-            
-            let hashFunction = pbkdf2Params.hashFunction
+        switch encryptionAlgorithm {
+        case let pbes2 as PBES2:
+            let pbkdf2Params = pbes2.parameters.keyDerivationFunction.parameters
             
             let derivedKey = try KDF.Insecure.PBKDF2.deriveKey(
                 from: [UInt8](password.utf8),
                 salt: pbkdf2Params.salt.bytes,
-                using: .from(objectIdentifier: hashFunction.objectIdentifer)!,
-                outputByteCount: pbes2Params.encryptionScheme.encryptionAlgorithm.encryptionAlgorithmKeyLength,
-                unsafeUncheckedRounds: pbkdf2Params.iterationCount as! Int
+                using: .from(objectIdentifier: pbkdf2Params.hashFunction.objectIdentifer)!,
+                outputByteCount: pbes2.parameters.encryptionScheme.encryptionAlgorithm.encryptionAlgorithmKeyLength,
+                unsafeUncheckedRounds: pbkdf2Params.iterationCount
             )
             
-            let decryption: Data? = switch pbes2Params.encryptionScheme.encryptionAlgorithm {
+            let decryption: Data? = switch pbes2.parameters.encryptionScheme.encryptionAlgorithm {
             case .aes128_CBC, .aes192_CBC, .aes256_CBC:
                 try AES._CBC.decrypt(
                     encryptedData.bytes,
                     using: derivedKey,
-                    iv: .init(ivBytes: pbes2Params.encryptionScheme.encryptionAlgorithmParameters.bytes)
+                    iv: .init(ivBytes: pbes2.parameters.encryptionScheme.encryptionAlgorithmParameters.bytes)
                 )
             case .des_EDE3_CBC:
                 try TripleDES.CBC.decrypt(
                     encryptedData.bytes,
                     using: derivedKey,
-                    iv: pbes2Params.encryptionScheme.encryptionAlgorithmParameters.bytes
+                    iv: pbes2.parameters.encryptionScheme.encryptionAlgorithmParameters.bytes
                 )
             default: nil
             }

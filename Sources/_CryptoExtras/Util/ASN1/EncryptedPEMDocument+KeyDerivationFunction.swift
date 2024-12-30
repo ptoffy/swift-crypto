@@ -15,36 +15,39 @@
 import SwiftASN1
 
 extension EncryptedPEMDocument {
-    struct KeyDerivationFunction: DERImplicitlyTaggable {
-        static var defaultIdentifier: ASN1Identifier { .sequence }
+    protocol KeyDerivationFunction: DERParseable {
+        associatedtype Parameters: KeyDerivationFunctionParameters
         
-        let algorithm: ASN1ObjectIdentifier
-        let parameters: ASN1Any
+        var algorithm: ASN1ObjectIdentifier { get }
+        var parameters: Parameters { get }
         
-        init(algorithm: ASN1ObjectIdentifier, parameters: ASN1Any) {
-            self.algorithm = algorithm
-            self.parameters = parameters
-        }
+        init(derEncoded node: ASN1Node) throws
         
-        init(derEncoded: ASN1Node, withIdentifier identifier: ASN1Identifier) throws {
-            self = try DER.sequence(derEncoded, identifier: identifier) { nodes in
-                let algorithm = try ASN1ObjectIdentifier(derEncoded: &nodes)
-                let parameters = try ASN1Any(derEncoded: &nodes)
-                
-                return .init(algorithm: algorithm, parameters: parameters)
-            }
-        }
-        
-        func serialize(into coder: inout DER.Serializer, withIdentifier identifier: ASN1Identifier) throws {
-            try coder.appendConstructedNode(identifier: identifier) { coder in
-                try self.algorithm.serialize(into: &coder)
-                try self.parameters.serialize(into: &coder)
-            }
+        init(parameters: Parameters)
+    }
+    
+    protocol KeyDerivationFunctionParameters: DERParseable {}
+}
+
+extension EncryptedPEMDocument.KeyDerivationFunction {
+    init(derEncoded node: ASN1Node) throws {
+        self = try DER.sequence(node, identifier: .sequence) { nodes in
+            let parameters = try Parameters(derEncoded: &nodes)
+            
+            return .init(parameters: parameters)
         }
     }
 }
 
-extension EncryptedPEMDocument.KeyDerivationFunction {
+extension EncryptedPEMDocument {
+    struct PBKDF2: KeyDerivationFunction {
+        var algorithm: ASN1ObjectIdentifier { .pkcs5PBKDF2 }
+        let parameters: EncryptedPEMDocument.PBKDF2Parameters
+    }
+}
+    
+
+extension EncryptedPEMDocument {
     // PBKDF2-params ::= SEQUENCE {
     //   salt CHOICE {
     //     specified       OCTET STRING,
@@ -54,21 +57,19 @@ extension EncryptedPEMDocument.KeyDerivationFunction {
     //   keyLength         INTEGER (1..MAX) OPTIONAL,
     //   prf               AlgorithmIdentifier {{PBKDF2-PRFs}} DEFAULT algid-hmacWithSHA1
     // }
-    struct PBKDF2Parameters: DERImplicitlyTaggable {
-        static var defaultIdentifier: ASN1Identifier { .sequence }
-        
+    struct PBKDF2Parameters: KeyDerivationFunctionParameters {
         let salt: ASN1OctetString
-        let iterationCount: any ASN1IntegerRepresentable
+        let iterationCount: Int
         let hashFunction: HashFunction
         
-        init(salt: ASN1OctetString, iterationCount: any ASN1IntegerRepresentable, hashFunction: HashFunction) {
+        init(salt: ASN1OctetString, iterationCount: Int, hashFunction: HashFunction) {
             self.salt = salt
             self.iterationCount = iterationCount
             self.hashFunction = hashFunction
         }
         
-        init(derEncoded: ASN1Node, withIdentifier identifier: ASN1Identifier) throws {
-            self = try DER.sequence(derEncoded, identifier: identifier) { nodes in
+        init(derEncoded node: ASN1Node) throws {
+            self = try DER.sequence(node, identifier: .sequence) { nodes in
                 let salt = try ASN1OctetString(derEncoded: &nodes)
                 let iterationCount = try Int(derEncoded: &nodes)
                 let hashFunction = try HashFunction(derEncoded: &nodes)
@@ -76,19 +77,11 @@ extension EncryptedPEMDocument.KeyDerivationFunction {
                 return .init(salt: salt, iterationCount: iterationCount, hashFunction: hashFunction)
             }
         }
-        
-        func serialize(into coder: inout DER.Serializer, withIdentifier identifier: ASN1Identifier) throws {
-            try coder.appendConstructedNode(identifier: identifier) { coder in
-                try self.salt.serialize(into: &coder)
-                try self.iterationCount.serialize(into: &coder)
-                try self.hashFunction.serialize(into: &coder)
-            }
-        }
     }
 }
 
-extension EncryptedPEMDocument.KeyDerivationFunction.PBKDF2Parameters {
-    struct HashFunction: DERImplicitlyTaggable {
+extension EncryptedPEMDocument.PBKDF2Parameters {
+    struct HashFunction: DERParseable {
         static var defaultIdentifier: ASN1Identifier { .sequence }
         
         let objectIdentifer: ASN1ObjectIdentifier
@@ -99,19 +92,12 @@ extension EncryptedPEMDocument.KeyDerivationFunction.PBKDF2Parameters {
             self.null = null
         }
         
-        init(derEncoded: ASN1Node, withIdentifier identifier: ASN1Identifier) throws {
-            self = try DER.sequence(derEncoded, identifier: identifier) { nodes in
+        init(derEncoded node: ASN1Node) throws {
+            self = try DER.sequence(node, identifier: .sequence) { nodes in
                 let objectIdentifer = try ASN1ObjectIdentifier(derEncoded: &nodes)
                 let null = try ASN1Null(derEncoded: &nodes)
                 
                 return .init(objectIdentifer: objectIdentifer, null: null)
-            }
-        }
-        
-        func serialize(into coder: inout DER.Serializer, withIdentifier identifier: ASN1Identifier) throws {
-            try coder.appendConstructedNode(identifier: identifier) { coder in
-                try self.objectIdentifer.serialize(into: &coder)
-                try self.null.serialize(into: &coder)
             }
         }
     }

@@ -15,30 +15,23 @@
 import SwiftASN1
 
 extension EncryptedPEMDocument {
-    struct PBES2Parameters: DERImplicitlyTaggable {
+    struct PBES2Parameters: DERParseable {
         static var defaultIdentifier: SwiftASN1.ASN1Identifier { .sequence }
         
-        let keyDerivationFunction: KeyDerivationFunction
+        let keyDerivationFunction: PBKDF2
         let encryptionScheme: EncryptionScheme
         
-        init(keyDerivationFunction: KeyDerivationFunction, encryptionScheme: EncryptionScheme) {
+        init(keyDerivationFunction: PBKDF2, encryptionScheme: EncryptionScheme) {
             self.keyDerivationFunction = keyDerivationFunction
             self.encryptionScheme = encryptionScheme
         }
         
-        init(derEncoded: SwiftASN1.ASN1Node, withIdentifier identifier: SwiftASN1.ASN1Identifier) throws {
-            self = try DER.sequence(derEncoded, identifier: identifier) { nodes in
-                let keyDerivationFunction = try KeyDerivationFunction(derEncoded: &nodes)
+        init(derEncoded node: ASN1Node) throws {
+            self = try DER.sequence(node, identifier: .sequence) { nodes in
+                let keyDerivationFunction = try PBKDF2(derEncoded: &nodes)
                 let encryptionScheme = try EncryptionScheme(derEncoded: &nodes)
                 
                 return .init(keyDerivationFunction: keyDerivationFunction, encryptionScheme: encryptionScheme)
-            }
-        }
-        
-        func serialize(into coder: inout SwiftASN1.DER.Serializer, withIdentifier identifier: SwiftASN1.ASN1Identifier) throws {
-            try coder.appendConstructedNode(identifier: identifier) { coder in
-                try self.keyDerivationFunction.serialize(into: &coder)
-                try self.encryptionScheme.serialize(into: &coder)
             }
         }
     }
